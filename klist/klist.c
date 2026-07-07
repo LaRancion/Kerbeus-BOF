@@ -307,10 +307,26 @@ long int my_strtol(const char* str, char** endptr, int base) {
 void KLIST( char* luid, char* targetService, char* targetUser, char* targetClient ) {
     LUID   targetLuid = { 0 };
     HANDLE hToken = GetCurrentToken(TOKEN_QUERY);
-    BOOL IsHighIntegrity = IsSystem(hToken);
+    BOOL IsSystemToken = IsSystem(hToken);
+    BOOL IsElevated = IsHighIntegrity();
+    BOOL DidImpersonate = FALSE;
 
-    if (!IsHighIntegrity && (luid || targetUser)) {
-        PRINT_OUT("[X] You need to be in SYSTEM integrity.\n");
+    // If we're elevated but not yet SYSTEM, impersonate winlogon's SYSTEM token
+    // so we have SeTcbPrivilege for LsaRegisterLogonProcess/LsaEnumerateLogonSessions.
+    // Mirrors Rubeus' Helpers.GetSystem() approach.
+    if (IsElevated && !IsSystemToken) {
+        if (GetSystem()) {
+            IsSystemToken = TRUE;
+            DidImpersonate = TRUE;
+        }
+        else {
+            PRINT_OUT("[!] Could not elevate to SYSTEM (GetSystem failed)\n");
+        }
+    }
+
+    if (!IsSystemToken && (luid || targetUser)) {
+        PRINT_OUT("[X] You need to be in high integrity to enumerate other users' tickets.\n");
+        if (DidImpersonate) ADVAPI32$RevertToSelf();
         return;
     }
 
@@ -318,11 +334,12 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
         targetLuid.LowPart = my_strtol(luid, NULL, 16);
         if (targetLuid.LowPart == 0 || targetLuid.LowPart == LONG_MAX || targetLuid.LowPart == LONG_MIN) {
             PRINT_OUT("[x] Invalid luid\n");
+            if (DidImpersonate) ADVAPI32$RevertToSelf();
             return;
         }
         PRINT_OUT("\nAction: List Kerberos Tickets( LUID: %s)\n\n", luid);
     }
-    else if (IsHighIntegrity) {
+    else if (IsSystemToken) {
         if( targetUser )
             PRINT_OUT("\nAction: List Kerberos Tickets for '%s'\n\n", targetUser);
         else
@@ -350,7 +367,7 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
 #endif
 
     HANDLE hLsa;
-    if (GetLsaHandle(hToken, IsHighIntegrity, &hLsa)) return;
+    if (GetLsaHandle(hToken, IsSystemToken, &hLsa)) return;
 
     ULONG authPackage;
     LSA_STRING krbAuth = { .Buffer = "kerberos",.Length = 8,.MaximumLength = 9 };
@@ -376,7 +393,7 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
                     }
                 }
 
-                if (IsHighIntegrity)
+                if (IsSystemToken)
                     cacheRequest.LogonId = sessionData.sessionData[i]->LogonId;
                 else
                     cacheRequest.LogonId = (LUID){ 0 };
@@ -449,6 +466,9 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
         PRINT_OUT("--------------------------------------------------------------------------------------------------------------------------\n");
 #endif
     SECUR32$LsaDeregisterLogonProcess(hLsa);
+
+    if (DidImpersonate)
+        ADVAPI32$RevertToSelf();
 }
 
 void KLIST_RUN( PCHAR Buffer, IN DWORD Length ) {

