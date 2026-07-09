@@ -640,14 +640,14 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
                 LUID sessLuid = sessionData.sessionData[i]->LogonId;
 
                 // Skip our own LUID — LSA zeroes the key for same-LUID non-SYSTEM callers.
-                if (sessLuid.LowPart == callerLuid.LowPart && sessLuid.HighPart == callerLuid.HighPart) {
-#ifndef TRIAGE
-                    PRINT_OUT("[*] Skipping own LUID 0x%x:0x%x (key would be zeroed in /high mode)\n",
-                        sessLuid.HighPart, sessLuid.LowPart);
-#endif
-                    SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
-                    continue;
-                }
+//                 if (sessLuid.LowPart == callerLuid.LowPart && sessLuid.HighPart == callerLuid.HighPart) {
+// #ifndef TRIAGE
+//                     PRINT_OUT("[*] Skipping own LUID 0x%x:0x%x (key would be zeroed in /high mode)\n",
+//                         sessLuid.HighPart, sessLuid.LowPart);
+// #endif
+//                     SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
+//                     continue;
+//                 }
 
                 // If a specific LUID was requested, skip non-matches.
                 if (targetLuid.LowPart != 0 &&
