@@ -66,9 +66,29 @@
           "description": "Dump tickets",
           "example": "kerbeus dump",
           "args": [
-            "STRING [params] {Args: [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]}"
+            "STRING [params] {Args: [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]}"
           ],
           "exec": "execute bof $EXT_DIR()/_bin/dump.$ARCH().o $PACK_BOF(CSTR {params})"
+        },
+        {
+          "name": "dump_high",
+          "message": "Task: Kerbeus DUMP (high integrity)",
+          "description": "Dump TGTs from a high-integrity process (no SYSTEM) via KerbRetrieveTicketMessage",
+          "example": "kerbeus dump_high",
+          "args": [
+            "STRING [params] {Args: [/luid:LOGINID] [/user:USER]}"
+          ],
+          "exec": "execute bof $EXT_DIR()/_bin/dump.$ARCH().o $PACK_BOF(CSTR /high {params})"
+        },
+        {
+          "name": "dump_system",
+          "message": "Task: Kerbeus DUMP (system)",
+          "description": "Dump TGTs via the classic SYSTEM (SeTcbPrivilege) path",
+          "example": "kerbeus dump_system",
+          "args": [
+            "STRING [params] {Args: [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]}"
+          ],
+          "exec": "execute bof $EXT_DIR()/_bin/dump.$ARCH().o $PACK_BOF(CSTR /system {params})"
         },
         {
           "name": "hash",
@@ -96,9 +116,29 @@
           "description": "List tickets",
           "example": "kerbeus klist /luid:3ea8",
           "args": [
-            "STRING [params] {Args: [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]}"
+            "STRING [params] {Args: [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]}"
           ],
           "exec": "execute bof $EXT_DIR()/_bin/klist.$ARCH().o $PACK_BOF(CSTR {params})"
+        },
+        {
+          "name": "klist_high",
+          "message": "Task: Kerbeus KLIST (high integrity)",
+          "description": "List tickets from a high-integrity process (no SYSTEM) via KerbRetrieveTicketMessage",
+          "example": "kerbeus klist_high",
+          "args": [
+            "STRING [params] {Args: [/luid:LOGINID] [/user:USER]}"
+          ],
+          "exec": "execute bof $EXT_DIR()/_bin/klist.$ARCH().o $PACK_BOF(CSTR /high {params})"
+        },
+        {
+          "name": "klist_system",
+          "message": "Task: Kerbeus KLIST (system)",
+          "description": "List tickets via the classic SYSTEM (SeTcbPrivilege) path",
+          "example": "kerbeus klist_system /luid:3ea8",
+          "args": [
+            "STRING [params] {Args: [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]}"
+          ],
+          "exec": "execute bof $EXT_DIR()/_bin/klist.$ARCH().o $PACK_BOF(CSTR /system {params})"
         },
         {
           "name": "ptt",

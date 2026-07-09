@@ -108,8 +108,46 @@ class KerbDumpBOF(_KerbeusBase):
         self.parser.description = "Dump tickets."
         self.parser.epilog = (
             "Synopsis:\n"
-            "  krb_dump [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n"
+            "  krb_dump [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]\n"
+            "\n"
+            "  /high   - dump TGTs from a high-integrity (non-SYSTEM) process via\n"
+            "            KerbRetrieveTicketMessage (full session keys for foreign LUIDs)\n"
+            "  /system - force the classic SYSTEM (SeTcbPrivilege) path\n"
         )
+
+
+class KerbDumpHighBOF(_KerbeusBase):
+    def __init__(self):
+        super().__init__("krb_dump_high", base_name="dump")
+        self.append_response("Kerbeus DUMP (high integrity) by RalfHacker\n")
+        self.parser.description = (
+            "Dump TGTs from a high-integrity (non-SYSTEM) process via "
+            "KerbRetrieveTicketMessage."
+        )
+        self.parser.epilog = (
+            "Synopsis:\n"
+            "  krb_dump_high [/luid:LOGINID] [/user:USER]\n"
+            "\n"
+            "LSA returns full (non-zeroed) session keys for foreign LUIDs without\n"
+            "SeTcbPrivilege. Based on https://jakeotte.com/posts/klist-revisited.html\n"
+        )
+
+    def _encode_arguments_bof(self, arguments: List[str]) -> List[Tuple[BOFArgumentEncoding, str]]:
+        return [(BOFArgumentEncoding.STR, "/high " + " ".join(arguments))]
+
+
+class KerbDumpSystemBOF(_KerbeusBase):
+    def __init__(self):
+        super().__init__("krb_dump_system", base_name="dump")
+        self.append_response("Kerbeus DUMP (system) by RalfHacker\n")
+        self.parser.description = "Dump TGTs via the classic SYSTEM (SeTcbPrivilege) path."
+        self.parser.epilog = (
+            "Synopsis:\n"
+            "  krb_dump_system [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n"
+        )
+
+    def _encode_arguments_bof(self, arguments: List[str]) -> List[Tuple[BOFArgumentEncoding, str]]:
+        return [(BOFArgumentEncoding.STR, "/system " + " ".join(arguments))]
 
 
 class KerbHashBOF(_KerbeusBase):
@@ -142,8 +180,39 @@ class KerbKlistBOF(_KerbeusBase):
         self.parser.description = "List tickets."
         self.parser.epilog = (
             "Synopsis:\n"
-            "  krb_klist [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n"
+            "  krb_klist [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]\n"
         )
+
+
+class KerbKlistHighBOF(_KerbeusBase):
+    def __init__(self):
+        super().__init__("krb_klist_high", base_name="klist")
+        self.append_response("Kerbeus KLIST (high integrity) by RalfHacker\n")
+        self.parser.description = (
+            "List tickets from a high-integrity (non-SYSTEM) process via "
+            "KerbRetrieveTicketMessage."
+        )
+        self.parser.epilog = (
+            "Synopsis:\n"
+            "  krb_klist_high [/luid:LOGINID] [/user:USER]\n"
+        )
+
+    def _encode_arguments_bof(self, arguments: List[str]) -> List[Tuple[BOFArgumentEncoding, str]]:
+        return [(BOFArgumentEncoding.STR, "/high " + " ".join(arguments))]
+
+
+class KerbKlistSystemBOF(_KerbeusBase):
+    def __init__(self):
+        super().__init__("krb_klist_system", base_name="klist")
+        self.append_response("Kerbeus KLIST (system) by RalfHacker\n")
+        self.parser.description = "List tickets via the classic SYSTEM (SeTcbPrivilege) path."
+        self.parser.epilog = (
+            "Synopsis:\n"
+            "  krb_klist_system [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n"
+        )
+
+    def _encode_arguments_bof(self, arguments: List[str]) -> List[Tuple[BOFArgumentEncoding, str]]:
+        return [(BOFArgumentEncoding.STR, "/system " + " ".join(arguments))]
 
 
 class KerbPttBOF(_KerbeusBase):

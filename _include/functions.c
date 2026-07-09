@@ -133,6 +133,11 @@ typedef WINADVAPI BOOL (WINAPI* _AllocateAndInitializeSid)(PSID_IDENTIFIER_AUTHO
 typedef WINADVAPI BOOL (WINAPI* _EqualSid)(PSID pSid1, PSID pSid2);
 typedef WINADVAPI PVOID (WINAPI* _FreeSid)(PSID pSid);
 
+// RtlAdjustPrivilege — ntdll. Used to enable SeTcbPrivilege/SeImpersonatePrivilege
+// on the current process token before LsaCallAuthenticationPackage, mirroring what
+// klist.exe does (see https://jakeotte.com/posts/klist-revisited.html).
+typedef NTSTATUS (NTAPI* _RtlAdjustPrivilege)(ULONG Privilege, BOOL Enable, BOOL CurrentThread, PBOOLEAN Enabled);
+
 typedef WINBASEAPI NTSTATUS (WINAPI* _LsaConnectUntrusted)(PHANDLE LsaHandle);
 typedef WINBASEAPI NTSTATUS (WINAPI* _LsaRegisterLogonProcess)(PLSA_STRING LogonProcessName, PHANDLE LsaHandle, PLSA_OPERATIONAL_MODE SecurityMode);
 typedef WINBASEAPI NTSTATUS (WINAPI* _LsaGetLogonSessionData)(PLUID LogonId, PSECURITY_LOGON_SESSION_DATA* ppLogonSessionData);
@@ -171,6 +176,7 @@ _Process32NextW           KERNEL32$Process32NextW           __attribute__((secti
 _AllocateAndInitializeSid ADVAPI32$AllocateAndInitializeSid __attribute__((section(".data"))) = 0;
 _EqualSid                 ADVAPI32$EqualSid                 __attribute__((section(".data"))) = 0;
 _FreeSid                  ADVAPI32$FreeSid                  __attribute__((section(".data"))) = 0;
+_RtlAdjustPrivilege       NTDLL$RtlAdjustPrivilege          __attribute__((section(".data"))) = 0;
 
 pRtlAnsiStringToUnicodeString RtlAnsiStringToUnicodeString __attribute__((section(".data"))) = 0;
 pRtlInitUnicodeString         RtlInitUnicodeString         __attribute__((section(".data"))) = 0;
@@ -400,6 +406,17 @@ BOOL LoadFunc() {
     KERNEL32$Process32NextW = GetProcAddress(k32, "Process32NextW");
     if (!KERNEL32$Process32NextW) goto failed;
 
+    HMODULE ntdll2 = GetModuleHandleA("ntdll.dll");
+    if (!ntdll2)
+        ntdll2 = LoadLibraryA("ntdll.dll");
+    if (!ntdll2) {
+        PRINT_OUT("[x] Failed to load ntdll module\n");
+        goto failed;
+    }
+
+    NTDLL$RtlAdjustPrivilege = GetProcAddress(ntdll2, "RtlAdjustPrivilege");
+    if (!NTDLL$RtlAdjustPrivilege) goto failed;
+
     MEMORY_BANK = KERNEL32$VirtualAlloc(NULL, sizeof(void*) * 0x1000, MEM_COMMIT, PAGE_READWRITE);
     BANK_COUNT = 0;
 
@@ -499,6 +516,18 @@ BOOL GetSystem() {
     KERNEL32$CloseHandle(hProcess);
 
     return ok;
+}
+
+// Enable a privilege on the current process token via RtlAdjustPrivilege.
+// Privilege LUIDs: SE_CREATE_TOKEN_PRIVILEGE=2, SE_ASSIGNPRIMARYTOKEN=3,
+// SE_TCB_PRIVILEGE=7, SE_IMPERSONATE_PRIVILEGE=29.
+// Returns TRUE on success. This mirrors what klist.exe does before calling
+// LsaCallAuthenticationPackage for a foreign LUID (see klist-revisited blog).
+BOOL EnablePrivilege(ULONG PrivilegeLuid, BOOL Enable) {
+    if (!NTDLL$RtlAdjustPrivilege) return FALSE;
+    BOOLEAN wasEnabled = FALSE;
+    NTSTATUS s = NTDLL$RtlAdjustPrivilege(PrivilegeLuid, Enable, FALSE, &wasEnabled);
+    return (s == 0);
 }
 
 
